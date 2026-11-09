@@ -36,6 +36,8 @@
  *   type "getJson"       -> { json } the particle file only, no picture (cheap to ask often)       (1.1.2)
  *   1.1.3: loadParticle first clears Snowstorm like File > New, so boxes that aren't in the file
  *          (an empty Direction, say) don't keep old values.
+ *   1.1.4: showField { focus: true } puts the cursor in that box with its text selected, and the
+ *          highlight pulse starts again each time (so "find the box" visibly does something).
  *   inputId is Snowstorm's own input id, e.g. "particle_motion_mode",
  *   "particle_motion_relative_position" (value ["x", "y", "z"]).
  * Messages out:
@@ -91,8 +93,8 @@
 	'use strict';
 	if (window.parent === window) return; // not embedded: nothing to do
 
-	var BRIDGE_VERSION = '1.1.3';
-	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField', 'showGuide', 'guideV2', 'getJson', 'cleanLoad'];
+	var BRIDGE_VERSION = '1.1.4';
+	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField', 'showGuide', 'guideV2', 'getJson', 'cleanLoad', 'focusField'];
 	var OUT = 'cleverlike-snowstorm-bridge';
 	var parentOrigin = null; // learned from the first message; replies go only there
 	var watchTimer = null;
@@ -248,7 +250,7 @@
 		var keys = Object.keys(window.Data), tabs = document.querySelectorAll('.sidebar_tab'), i = keys.indexOf(tab);
 		if (tabs[i]) tabs[i].click();
 	}
-	function showField(id, axis, note) {
+	function showField(id, axis, note, focus) {
 		clearHighlight();
 		if (id == null) return Promise.resolve({ shown: false });
 		var f = findInput(id);
@@ -261,6 +263,7 @@
 				var li = document.getElementById(f.tab + '-' + f.group + '-' + f.key);
 				if ((!li || li.offsetParent === null) && ++tries < 20) return setTimeout(find, 50);
 				if (!li || li.offsetParent === null) return resolve({ shown: false });
+				void li.offsetWidth; // restart the pulse animation even if this row was highlighted a moment ago
 				li.classList.add('cleverlike-hl');
 				var target = li;
 				var boxes = li.querySelectorAll('.input_vector');
@@ -269,6 +272,10 @@
 					for (var b = 0; b < 3; b++) boxes[b].setAttribute('data-cleverlike-axis', 'XYZ'[b]);
 				}
 				if (axis != null && boxes[axis]) { boxes[axis].classList.add('cleverlike-hl-axis'); target = boxes[axis]; }
+				if (focus && axis != null && boxes[axis]) {
+					var ta = boxes[axis].querySelector('textarea, input');
+					if (ta) { try { ta.focus(); ta.select(); } catch (e) { /* ignore */ } }
+				}
 				if (note) {
 					var bubble = document.createElement('div');
 					bubble.className = 'cleverlike-note';
@@ -513,7 +520,7 @@
 		},
 		showGuide: function (msg) { return showGuide(msg); },
 		showField: function (msg) {
-			return showField(msg.field == null ? null : msg.field, msg.axis == null ? null : Number(msg.axis), msg.note ? String(msg.note).slice(0, 300) : '');
+			return showField(msg.field == null ? null : msg.field, msg.axis == null ? null : Number(msg.axis), msg.note ? String(msg.note).slice(0, 300) : '', !!msg.focus);
 		}
 	};
 
