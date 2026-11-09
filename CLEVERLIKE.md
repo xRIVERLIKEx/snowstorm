@@ -8,6 +8,7 @@ Our only changes:
    Since bridge 1.0.1 it also works around a Snowstorm 3.3.x bug: picking a Quick Setup sprite (Ball, Leaves, Sparkle…) threw an error (`Cannot read properties of undefined (reading 'target')` in `Input.change`) and the preview kept the missing-texture picture. The workaround does nothing once Snowstorm fixes this.
    Since bridge 1.1.0 the embedding page can also read and set single Snowstorm boxes (for example Motion → Offset) and highlight a box so students can see where a value goes. Used by the Particle Packer's Motion Lab.
    Since bridge 1.1.1: the highlight is drawn inside the row (tags X / Y / Z on three-part boxes, in the preview's axis colours); the lab can draw a numbered block column and a target star in the 3D preview (`showGuide`); and when Snowstorm opened in its narrow phone layout (no 3D preview) because its frame was under 720 px wide at load, it switches back to the normal layout once the frame is 560 px or wider.
+   Since bridge 1.1.2: the lab's target can be an outline picture (fit the particle in like a puzzle piece) that turns green when reached, the lab can point at things in the preview with an arrow and a word, rows can show a short explanation bubble, and `getJson` lets the lab notice changes outside the current step and put the particle back.
 2. **`index.html`**: one `<script>` line after `dist/app.js` that loads the bridge.
 3. **`CNAME` removed**, so GitHub Pages serves this copy at `https://xriverlikex.github.io/snowstorm/` instead of claiming snowstorm.app.
 
@@ -44,6 +45,9 @@ Send to the iframe with `iframe.contentWindow.postMessage(msg, "https://xriverli
 | `setFields` (1.1.0) | `fields` `[[id, value], …]`, applied in order | `fields` |
 | `showField` (1.1.0) | `field` (input id), `axis?` (0/1/2); `field: null` clears | opens that tab and highlights the row (and that box): `shown`, `label` |
 | `showGuide` (1.1.1) | `ruler?` (blocks), `star?` (height), `frame?`; `{}` clears | draws a numbered block column and a target star in the preview |
+| `showGuide` (1.1.2) | also `targetImage` (PNG data URL), `targetSize`, `hit`, `pointer {at: "emitter"\|"block"\|[x,y,z], label, size}` | outline target, green when hit; an arrow with a word |
+| `showField` (1.1.2) | also `note` (text, `**bold**` allowed) | a small explanation bubble under the row |
+| `getJson` (1.1.2) | – | `json` (the particle file as text, no picture) |
 
 Input ids are Snowstorm's own, e.g. `particle_motion_mode` (`dynamic`/`parametric`/`static`) and `particle_motion_relative_position` (`["x", "y", "z"]`, Molang text).
 

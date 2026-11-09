@@ -29,6 +29,11 @@
  *   type "showGuide"     args { star?: y, ruler?: blocks, frame?: true } -> draws helpers in the   (1.1.1)
  *                        3D preview: a column of numbered blocks next to the emitter and a target
  *                        star at height y. {} removes them. frame moves the camera so 0..ruler fits.
+ *                        1.1.2: targetImage (PNG data URL, drawn pixel-sharp instead of the star),
+ *                        targetSize (blocks), hit (target turns green and pulses),
+ *                        pointer { at: "emitter" | "block" | [x,y,z], label } (an arrow with a word).
+ *   type "showField"     1.1.2: note (text) shows a small explanation bubble under the row.
+ *   type "getJson"       -> { json } the particle file only, no picture (cheap to ask often)       (1.1.2)
  *   inputId is Snowstorm's own input id, e.g. "particle_motion_mode",
  *   "particle_motion_relative_position" (value ["x", "y", "z"]).
  * Messages out:
@@ -84,8 +89,8 @@
 	'use strict';
 	if (window.parent === window) return; // not embedded: nothing to do
 
-	var BRIDGE_VERSION = '1.1.1';
-	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField', 'showGuide'];
+	var BRIDGE_VERSION = '1.1.2';
+	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField', 'showGuide', 'guideV2', 'getJson'];
 	var OUT = 'cleverlike-snowstorm-bridge';
 	var parentOrigin = null; // learned from the first message; replies go only there
 	var watchTimer = null;
@@ -220,10 +225,17 @@
 			'font:800 11px/1 system-ui,sans-serif;padding:3px 5px;border-radius:4px;color:#fff}' +
 			'.cleverlike-axes .input_vector[data-cleverlike-axis="X"]::before{background:#d9363e}' +
 			'.cleverlike-axes .input_vector[data-cleverlike-axis="Y"]::before{background:#3a9c2c}' +
-			'.cleverlike-axes .input_vector[data-cleverlike-axis="Z"]::before{background:#2f6fde}';
+			'.cleverlike-axes .input_vector[data-cleverlike-axis="Z"]::before{background:#2f6fde}' +
+			'.cleverlike-hl{position:relative}' +
+			'.cleverlike-note{position:absolute;left:8px;right:8px;top:calc(100% + 6px);z-index:20;background:#fff4c2;color:#1d1a10;border-radius:8px;padding:7px 10px;' +
+			'font:600 12.5px/1.35 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.45);pointer-events:none}' +
+			'.cleverlike-note b{font-weight:800}' +
+			'.cleverlike-note::before{content:"";position:absolute;left:28px;top:-6px;border:6px solid transparent;border-top:0;border-bottom-color:#fff4c2}';
 		document.head.appendChild(st);
 	}
 	function clearHighlight() {
+		var notes = document.querySelectorAll('.cleverlike-note');
+		for (var n = 0; n < notes.length; n++) notes[n].parentNode.removeChild(notes[n]);
 		var old = document.querySelectorAll('.cleverlike-hl, .cleverlike-hl-axis, .cleverlike-axes');
 		for (var i = 0; i < old.length; i++) old[i].classList.remove('cleverlike-hl', 'cleverlike-hl-axis', 'cleverlike-axes');
 	}
@@ -234,7 +246,7 @@
 		var keys = Object.keys(window.Data), tabs = document.querySelectorAll('.sidebar_tab'), i = keys.indexOf(tab);
 		if (tabs[i]) tabs[i].click();
 	}
-	function showField(id, axis) {
+	function showField(id, axis, note) {
 		clearHighlight();
 		if (id == null) return Promise.resolve({ shown: false });
 		var f = findInput(id);
@@ -255,6 +267,13 @@
 					for (var b = 0; b < 3; b++) boxes[b].setAttribute('data-cleverlike-axis', 'XYZ'[b]);
 				}
 				if (axis != null && boxes[axis]) { boxes[axis].classList.add('cleverlike-hl-axis'); target = boxes[axis]; }
+				if (note) {
+					var bubble = document.createElement('div');
+					bubble.className = 'cleverlike-note';
+					var parts = String(note).split('**');
+					parts.forEach(function (txt, k) { if (k % 2) { var b = document.createElement('b'); b.textContent = txt; bubble.appendChild(b); } else bubble.appendChild(document.createTextNode(txt)); });
+					li.appendChild(bubble);
+				}
 				// scroll only the sidebar's own list, never the page around it
 				var sc = li.parentElement;
 				while (sc && sc !== document.body && !(sc.scrollHeight > sc.clientHeight + 2 && /auto|scroll/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement;
@@ -303,7 +322,8 @@
 		clearGuide();
 		var blocks = Math.max(0, Math.min(16, Math.round(Number(msg.ruler) || 0)));
 		var star = msg.star == null ? null : Number(msg.star);
-		if (!blocks && star == null) return { shown: false };
+		var pointer = msg.pointer && msg.pointer.at ? msg.pointer : null;
+		if (!blocks && star == null && !pointer) return { shown: false };
 		var K = threeKit();
 		guide = new K.Group(); guide.name = 'cleverlike-guide';
 		// the column stands just left of the emitter as seen from Snowstorm's starting camera (which looks along +x +z)
@@ -340,7 +360,26 @@
 			yl.position.set(0, blocks + 0.9, 0);
 			guide.add(yl);
 		}
-		if (star != null && isFinite(star)) {
+		if (star != null && isFinite(star) && typeof msg.targetImage === 'string' && /^data:image\/png;base64,/.test(msg.targetImage)) {
+			// the target is an outline of the particle's own picture: fit the sparkle in like a puzzle piece
+			var img = new Image(), ttex = new K.Texture(img);
+			ttex.magFilter = 1003; ttex.minFilter = 1003; // NearestFilter: keep pixel art sharp
+			img.onload = function () { ttex.needsUpdate = true; };
+			img.src = msg.targetImage;
+			var size = Math.max(0.2, Math.min(4, Number(msg.targetSize) || 1));
+			var tm = new K.Mesh(new K.Box(size, size, 0.001), new K.BasicMaterial({ map: ttex, transparent: true, depthTest: false, depthWrite: false }));
+			tm.renderOrder = 998;
+			if (msg.hit) tm.material.color.setHex(0x5be06a);
+			var born = performance.now();
+			tm.onBeforeRender = function (renderer, scene, camera) {
+				guideCamera = camera; this.quaternion.copy(camera.quaternion);
+				var sc = msg.hit ? 1 + 0.12 * Math.sin((performance.now() - born) / 120) * Math.max(0, 1 - (performance.now() - born) / 1500) : 1;
+				this.scale.set(sc, sc, sc);
+				this.updateMatrixWorld(true);
+			};
+			tm.position.set(0, star, 0);
+			guide.add(tm);
+		} else if (star != null && isFinite(star)) {
 			var st = billboard(K, canvasTexture(K, function (ctx, w, h) {
 				ctx.beginPath();
 				for (var i = 0; i < 10; i++) { var a = Math.PI / 5 * i - Math.PI / 2, r = i % 2 ? w * 0.19 : w * 0.44; ctx.lineTo(w / 2 + r * Math.cos(a), h / 2 + r * Math.sin(a)); }
@@ -348,6 +387,36 @@
 			}, 128, 128), 1.6);
 			st.position.set(0, star, 0);
 			guide.add(st);
+		}
+		if (pointer) {
+			var at = pointer.at === 'emitter' ? [0, 0, 0] : pointer.at === 'block' ? [CX, 0.5, CZ] : pointer.at;
+			if (at instanceof Array && at.length === 3) {
+				var label = String(pointer.label || '').slice(0, 40);
+				var pw = 256, ph = 192;
+				var ptex = canvasTexture(K, function (ctx, w, h) {
+					// word on top, arrow pointing straight down to the thing
+					ctx.font = 'bold 40px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+					var tw = Math.min(w - 8, ctx.measureText(label).width + 28);
+					ctx.fillStyle = '#fff4c2'; ctx.beginPath();
+					if (ctx.roundRect) ctx.roundRect((w - tw) / 2, 6, tw, 56, 14); else ctx.rect((w - tw) / 2, 6, tw, 56);
+					ctx.fill(); ctx.fillStyle = '#1d1a10'; ctx.fillText(label, w / 2, 35);
+					ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = '#7a5a00'; ctx.lineWidth = 4;
+					ctx.beginPath(); ctx.moveTo(w / 2 - 14, 72); ctx.lineTo(w / 2 + 14, 72); ctx.lineTo(w / 2 + 14, 140); ctx.lineTo(w / 2 + 34, 140);
+					ctx.lineTo(w / 2, h - 4); ctx.lineTo(w / 2 - 34, 140); ctx.lineTo(w / 2 - 14, 140); ctx.closePath(); ctx.fill(); ctx.stroke();
+				}, pw, ph);
+				var ph3 = Math.max(0.8, Math.min(4, Number(pointer.size) || 1.5)), pm = billboard(K, ptex, ph3, pw / ph);
+				var pBorn = performance.now();
+				pm.onBeforeRender = function (renderer, scene, camera) {
+					guideCamera = camera; this.quaternion.copy(camera.quaternion);
+					// sit just above the thing, bobbing gently so it catches the eye
+					var bob = 0.12 * Math.sin((performance.now() - pBorn) / 260);
+					var up = { x: 0, y: 1, z: 0 };
+					this.position.set(at[0], at[1] + ph3 / 2 + 0.35 + bob, at[2]);
+					this.updateMatrixWorld(true);
+				};
+				pm.position.set(at[0], at[1] + ph3 / 2 + 0.35, at[2]);
+				guide.add(pm);
+			}
 		}
 		sceneRoot().add(guide);
 		if (msg.frame && blocks) {
@@ -426,6 +495,7 @@
 			}
 			return { watching: !!watchTimer };
 		},
+		getJson: function () { return { json: currentJsonString() }; },
 		getFields: function (msg) {
 			var out = {};
 			(msg.ids || []).forEach(function (id) { out[id] = readField(id); });
@@ -438,7 +508,7 @@
 		},
 		showGuide: function (msg) { return showGuide(msg); },
 		showField: function (msg) {
-			return showField(msg.field == null ? null : msg.field, msg.axis == null ? null : Number(msg.axis));
+			return showField(msg.field == null ? null : msg.field, msg.axis == null ? null : Number(msg.axis), msg.note ? String(msg.note).slice(0, 300) : '');
 		}
 	};
 
