@@ -21,6 +21,13 @@
  *   type "loadParticle"  args { json, textureDataUrl?, textureName? } -> { identifier }
  *                        (no textureDataUrl = clear any picture left from the last particle)
  *   type "watch"         args { on: true|false, intervalMs? } -> later "changed" events
+ *   type "getFields"     args { ids: [inputId, ...] } -> { fields: { inputId: value } }      (1.1.0)
+ *   type "setFields"     args { fields: [[inputId, value], ...] } -> { fields }             (1.1.0)
+ *                        (applied in order, so set a Mode before the boxes it shows)
+ *   type "showField"     args { field, axis? } -> opens that box's tab and outlines it;       (1.1.0)
+ *                        field null removes the outline
+ *   inputId is Snowstorm's own input id, e.g. "particle_motion_mode",
+ *   "particle_motion_relative_position" (value ["x", "y", "z"]).
  * Messages out:
  *   { source: "cleverlike-snowstorm-bridge", v: 1, id, type: "result"|"error", ... }
  *   { source: "cleverlike-snowstorm-bridge", v: 1, type: "ready", bridgeVersion, capabilities }
@@ -69,30 +76,30 @@
 		proto.__cleverlikeNumberFix = true;
 	})();
 })();
- 
+
 (function () {
 	'use strict';
 	if (window.parent === window) return; // not embedded: nothing to do
- 
-	var BRIDGE_VERSION = '1.0.1';
-	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch'];
+
+	var BRIDGE_VERSION = '1.1.0';
+	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField'];
 	var OUT = 'cleverlike-snowstorm-bridge';
 	var parentOrigin = null; // learned from the first message; replies go only there
 	var watchTimer = null;
 	var lastSnapshot = null;
- 
+
 	function post(msg, origin) {
 		msg.source = OUT;
 		msg.v = 1;
 		try { window.parent.postMessage(msg, origin || parentOrigin || '*'); } catch (e) { /* parent gone */ }
 	}
- 
+
 	function appReady() {
 		return typeof window.generateFileForParentEffect === 'function' &&
 			typeof window.loadFileFromParentEffect === 'function' &&
 			window.Emitter && window.Emitter.config;
 	}
- 
+
 	function whenAppReady(timeoutMs) {
 		return new Promise(function (resolve, reject) {
 			var start = Date.now();
@@ -103,21 +110,21 @@
 			})();
 		});
 	}
- 
+
 	function currentJsonString() {
 		return window.generateFileForParentEffect();
 	}
- 
+
 	function identifierOf(json) {
 		try { return json.particle_effect.description.identifier || ''; } catch (e) { return ''; }
 	}
- 
+
 	function texturePath(json) {
 		try {
 			return json.particle_effect.description.basic_render_parameters.texture || '';
 		} catch (e) { return ''; }
 	}
- 
+
 	function imageToPng(img) {
 		return new Promise(function (resolve, reject) {
 			function draw() {
@@ -137,7 +144,7 @@
 			}
 		});
 	}
- 
+
 	function getTexture(json) {
 		var config = window.Emitter.config;
 		var path = texturePath(json);
@@ -156,7 +163,89 @@
 			return { kind: 'custom', path: path, name: name || 'texture.png', dataUrl: png.dataUrl, width: png.width, height: png.height };
 		});
 	}
- 
+
+	// ---- 1.1.0: single boxes (used by the Motion Lab coach) ----
+	// Snowstorm keeps every box as an Input in window.Data[tab][group].inputs[key].
+	function findInput(id) {
+		var data = window.Data;
+		for (var tab in data) {
+			if (!data[tab] || typeof data[tab] !== 'object') continue;
+			for (var group in data[tab]) {
+				var g = data[tab][group];
+				if (!g || typeof g !== 'object' || !g.inputs) continue;
+				for (var key in g.inputs) {
+					if (g.inputs[key] && g.inputs[key].id === id) return { input: g.inputs[key], tab: tab, group: group, key: key, groupObj: g };
+				}
+			}
+		}
+		throw new Error('Snowstorm has no box called ' + id + '.');
+	}
+	function plain(v) { return v instanceof Array ? v.map(function (x) { return x == null ? '' : String(x); }) : v; }
+	function readField(id) {
+		var f = findInput(id), v = f.input.value;
+		return plain(v);
+	}
+	function writeField(id, value) {
+		var f = findInput(id), input = f.input;
+		if (input.type === 'select' || input.type === 'select_custom') {
+			if (!input.options || !Object.prototype.hasOwnProperty.call(input.options, value)) throw new Error(id + ' cannot be ' + value + '.');
+			input.set(value);
+		} else if (input.value instanceof Array) {
+			if (!(value instanceof Array) || value.length !== input.value.length) throw new Error(id + ' needs ' + input.value.length + ' values.');
+			input.set(value.map(function (x) { return String(x == null ? '' : x); }));
+		} else {
+			input.set(input.type === 'checkbox' ? !!value : String(value == null ? '' : value));
+		}
+		lastSnapshot = null;
+		return plain(input.value);
+	}
+	var STYLE_ID = 'cleverlike-bridge-style';
+	function ensureStyle() {
+		if (document.getElementById(STYLE_ID)) return;
+		var st = document.createElement('style');
+		st.id = STYLE_ID;
+		st.textContent =
+			'.cleverlike-hl{outline:3px solid #ffc800;outline-offset:2px;border-radius:4px;animation:cleverlike-pulse 1.2s ease-in-out 3}' +
+			'.cleverlike-hl-axis{box-shadow:0 0 0 3px #ffc800 inset;border-radius:3px}' +
+			'@keyframes cleverlike-pulse{50%{outline-color:#ff8a00;outline-offset:5px}}';
+		document.head.appendChild(st);
+	}
+	function clearHighlight() {
+		var old = document.querySelectorAll('.cleverlike-hl, .cleverlike-hl-axis');
+		for (var i = 0; i < old.length; i++) old[i].classList.remove('cleverlike-hl', 'cleverlike-hl-axis');
+	}
+	function openTab(tab) {
+		var sidebar = document.getElementById('sidebar');
+		var vm = sidebar && sidebar.__vue__;
+		if (vm && typeof vm.selectSubject === 'function') { vm.selectSubject(tab); return; }
+		var keys = Object.keys(window.Data), tabs = document.querySelectorAll('.sidebar_tab'), i = keys.indexOf(tab);
+		if (tabs[i]) tabs[i].click();
+	}
+	function showField(id, axis) {
+		clearHighlight();
+		if (id == null) return Promise.resolve({ shown: false });
+		var f = findInput(id);
+		openTab(f.tab);
+		f.groupObj._folded = false;
+		ensureStyle();
+		return new Promise(function (resolve) {
+			var tries = 0;
+			(function find() {
+				var li = document.getElementById(f.tab + '-' + f.group + '-' + f.key);
+				if ((!li || li.offsetParent === null) && ++tries < 20) return setTimeout(find, 50);
+				if (!li || li.offsetParent === null) return resolve({ shown: false });
+				li.classList.add('cleverlike-hl');
+				var target = li;
+				if (axis != null) {
+					var boxes = li.querySelectorAll('.input_vector');
+					if (boxes[axis]) { boxes[axis].classList.add('cleverlike-hl-axis'); target = boxes[axis]; }
+				}
+				try { target.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { target.scrollIntoView(); }
+				resolve({ shown: true, tab: f.tab, label: f.input.label || '' });
+			})();
+		});
+	}
+
 	var handlers = {
 		ping: function () {
 			return Promise.resolve({ bridgeVersion: BRIDGE_VERSION, capabilities: CAPABILITIES });
@@ -199,9 +288,22 @@
 				}, every);
 			}
 			return { watching: !!watchTimer };
+		},
+		getFields: function (msg) {
+			var out = {};
+			(msg.ids || []).forEach(function (id) { out[id] = readField(id); });
+			return { fields: out };
+		},
+		setFields: function (msg) {
+			var out = {};
+			(msg.fields || []).forEach(function (pair) { out[pair[0]] = writeField(pair[0], pair[1]); });
+			return { fields: out };
+		},
+		showField: function (msg) {
+			return showField(msg.field == null ? null : msg.field, msg.axis == null ? null : Number(msg.axis));
 		}
 	};
- 
+
 	window.addEventListener('message', function (event) {
 		if (event.source !== window.parent) return; // only the page that embeds us
 		var msg = event.data;
@@ -221,10 +323,9 @@
 				post({ id: msg.id, type: 'error', message: (err && err.message) || String(err) }, origin);
 			});
 	});
- 
+
 	// Say hello once Snowstorm is up, so the host page knows the bridge is here.
 	whenAppReady(30000).then(function () {
 		post({ type: 'ready', bridgeVersion: BRIDGE_VERSION, capabilities: CAPABILITIES }, '*');
 	}).catch(function () { /* host page will time out and say so */ });
 })();
-

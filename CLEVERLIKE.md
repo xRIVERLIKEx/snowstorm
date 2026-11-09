@@ -5,6 +5,8 @@ This is a fork of [Snowstorm](https://github.com/JannisX11/snowstorm) by JannisX
 Our only changes:
 
 1. **`cleverlike-bridge.js`** (new, GPL-3.0-or-later). When Snowstorm is embedded in another page, that page can ask for the current particle (JSON + picture) or send a particle in. It only answers the page that embeds it, and only when asked.
+   Since bridge 1.0.1 it also works around a Snowstorm 3.3.x bug: picking a Quick Setup sprite (Ball, Leaves, Sparkle…) threw an error (`Cannot read properties of undefined (reading 'target')` in `Input.change`) and the preview kept the missing-texture picture. The workaround does nothing once Snowstorm fixes this.
+   Since bridge 1.1.0 the embedding page can also read and set single Snowstorm boxes (for example Motion → Offset) and outline a box so students can see where a value goes. Used by the Particle Packer's Motion Lab.
 2. **`index.html`**: one `<script>` line after `dist/app.js` that loads the bridge.
 3. **`CNAME` removed**, so GitHub Pages serves this copy at `https://xriverlikex.github.io/snowstorm/` instead of claiming snowstorm.app.
 
@@ -37,6 +39,11 @@ Send to the iframe with `iframe.contentWindow.postMessage(msg, "https://xriverli
 | `getParticle` | – | `json`, `identifier`, `texture` |
 | `loadParticle` | `json`, `textureDataUrl?` (PNG), `textureName?` | `identifier` (no picture = clears the old one) |
 | `watch` | `on`, `intervalMs?` | later `{type: "changed"}` events |
+| `getFields` (1.1.0) | `ids` (Snowstorm input ids) | `fields` `{id: value}` |
+| `setFields` (1.1.0) | `fields` `[[id, value], …]`, applied in order | `fields` |
+| `showField` (1.1.0) | `field` (input id), `axis?` (0/1/2); `field: null` clears | opens that tab and outlines the box: `shown`, `label` |
+
+Input ids are Snowstorm's own, e.g. `particle_motion_mode` (`dynamic`/`parametric`/`static`) and `particle_motion_relative_position` (`["x", "y", "z"]`, Molang text).
 
 Every request: `{ source: "cleverlike", bridge: "snowstorm", v: 1, id, type, ... }`. Replies: `{ source: "cleverlike-snowstorm-bridge", v: 1, id, type: "result" | "error", ... }`. On start the bridge also sends `{ type: "ready" }`.
 
