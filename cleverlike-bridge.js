@@ -38,6 +38,10 @@
  *          (an empty Direction, say) don't keep old values.
  *   1.1.4: showField { focus: true } puts the cursor in that box with its text selected, and the
  *          highlight pulse starts again each time (so "find the box" visibly does something).
+ *   1.1.5: a note about one box (axis given) sits under that box and its arrow points at it;
+ *          a note about the whole row still points at the row's name.
+ *   type "getParticles"  -> { list: [[age, x, y, z, lifetime], …] } the live particles in the preview  (1.2.0)
+ *                        (at most 120), so a lesson can wait until a real particle reaches a goal.
  *   inputId is Snowstorm's own input id, e.g. "particle_motion_mode",
  *   "particle_motion_relative_position" (value ["x", "y", "z"]).
  * Messages out:
@@ -93,8 +97,8 @@
 	'use strict';
 	if (window.parent === window) return; // not embedded: nothing to do
 
-	var BRIDGE_VERSION = '1.1.4';
-	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField', 'showGuide', 'guideV2', 'getJson', 'cleanLoad', 'focusField'];
+	var BRIDGE_VERSION = '1.2.0';
+	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField', 'showGuide', 'guideV2', 'getJson', 'cleanLoad', 'focusField', 'getParticles'];
 	var OUT = 'cleverlike-snowstorm-bridge';
 	var parentOrigin = null; // learned from the first message; replies go only there
 	var watchTimer = null;
@@ -231,10 +235,10 @@
 			'.cleverlike-axes .input_vector[data-cleverlike-axis="Y"]::before{background:#3a9c2c}' +
 			'.cleverlike-axes .input_vector[data-cleverlike-axis="Z"]::before{background:#2f6fde}' +
 			'.cleverlike-hl{position:relative}' +
-			'.cleverlike-note{position:absolute;left:8px;right:8px;top:calc(100% + 6px);z-index:20;background:#fff4c2;color:#1d1a10;border-radius:8px;padding:7px 10px;' +
+			'.cleverlike-note{position:absolute;left:8px;width:max-content;max-width:min(260px,calc(100% - 16px));top:calc(100% + 6px);z-index:20;background:#fff4c2;color:#1d1a10;border-radius:8px;padding:7px 10px;' +
 			'font:600 12.5px/1.35 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.45);pointer-events:none}' +
 			'.cleverlike-note b{font-weight:800}' +
-			'.cleverlike-note::before{content:"";position:absolute;left:28px;top:-6px;border:6px solid transparent;border-top:0;border-bottom-color:#fff4c2}';
+			'.cleverlike-note::before{content:"";position:absolute;left:var(--cleverlike-arrow,22px);top:-6px;border:6px solid transparent;border-top:0;border-bottom-color:#fff4c2}';
 		document.head.appendChild(st);
 	}
 	function clearHighlight() {
@@ -282,6 +286,13 @@
 					var parts = String(note).split('**');
 					parts.forEach(function (txt, k) { if (k % 2) { var b = document.createElement('b'); b.textContent = txt; bubble.appendChild(b); } else bubble.appendChild(document.createTextNode(txt)); });
 					li.appendChild(bubble);
+					// under the box it's about, arrow on the box's middle; kept inside the row
+					var lr = li.getBoundingClientRect();
+					var aim = (axis != null && boxes[axis]) ? boxes[axis].getBoundingClientRect() : (li.querySelector('label') || li).getBoundingClientRect();
+					var mid = aim.left + aim.width / 2 - lr.left, bw = bubble.offsetWidth;
+					var left = Math.max(4, Math.min(lr.width - bw - 4, mid - 34));
+					bubble.style.left = left + 'px';
+					bubble.style.setProperty('--cleverlike-arrow', Math.max(8, Math.min(bw - 20, mid - left - 6)) + 'px');
 				}
 				// scroll only the sidebar's own list, never the page around it
 				var sc = li.parentElement;
@@ -508,6 +519,13 @@
 			return { watching: !!watchTimer };
 		},
 		getJson: function () { return { json: currentJsonString() }; },
+		getParticles: function () {
+			var r = function (n) { return Math.round(n * 1000) / 1000; };
+			var list = (window.Emitter.particles || []).slice(0, 120).map(function (p) {
+				return [r(p.age || 0), r(p.position.x), r(p.position.y), r(p.position.z), r(p.lifetime || 0)];
+			});
+			return { list: list };
+		},
 		getFields: function (msg) {
 			var out = {};
 			(msg.ids || []).forEach(function (id) { out[id] = readField(id); });

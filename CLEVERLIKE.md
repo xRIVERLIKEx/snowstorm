@@ -11,6 +11,8 @@ Our only changes:
    Since bridge 1.1.2: the lab's target can be an outline picture (fit the particle in like a puzzle piece) that turns green when reached, the lab can point at things in the preview with an arrow and a word, rows can show a short explanation bubble, and `getJson` lets the lab notice changes outside the current step and put the particle back.
    Since bridge 1.1.3, `loadParticle` clears Snowstorm first (like File › New, without the question), so boxes that aren't in the loaded file don't keep old values.
    Since bridge 1.1.4, `showField` can put the cursor in the highlighted box (`focus: true`), and the highlight pulses again each time it's shown.
+   Since bridge 1.1.5, a note about one box sits under that box with its arrow pointing at it.
+   Since bridge 1.2.0, `getParticles` lists the live particles (age, position, lifetime), so a lesson can wait until a real particle reaches a goal.
 2. **`index.html`**: one `<script>` line after `dist/app.js` that loads the bridge.
 3. **`CNAME` removed**, so GitHub Pages serves this copy at `https://xriverlikex.github.io/snowstorm/` instead of claiming snowstorm.app.
 
@@ -50,6 +52,7 @@ Send to the iframe with `iframe.contentWindow.postMessage(msg, "https://xriverli
 | `showGuide` (1.1.2) | also `targetImage` (PNG data URL), `targetSize`, `hit`, `pointer {at: "emitter"\|"block"\|[x,y,z], label, size}` | outline target, green when hit; an arrow with a word |
 | `showField` (1.1.2) | also `note` (text, `**bold**` allowed) | a small explanation bubble under the row |
 | `getJson` (1.1.2) | – | `json` (the particle file as text, no picture) |
+| `getParticles` (1.2.0) | – | `list` of `[age, x, y, z, lifetime]` for up to 120 live particles |
 
 Input ids are Snowstorm's own, e.g. `particle_motion_mode` (`dynamic`/`parametric`/`static`) and `particle_motion_relative_position` (`["x", "y", "z"]`, Molang text).
 
