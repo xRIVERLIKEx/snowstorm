@@ -26,6 +26,9 @@
  *                        (applied in order, so set a Mode before the boxes it shows)
  *   type "showField"     args { field, axis? } -> opens that box's tab and outlines it;       (1.1.0)
  *                        field null removes the outline
+ *   type "showGuide"     args { star?: y, ruler?: blocks, frame?: true } -> draws helpers in the   (1.1.1)
+ *                        3D preview: a column of numbered blocks next to the emitter and a target
+ *                        star at height y. {} removes them. frame moves the camera so 0..ruler fits.
  *   inputId is Snowstorm's own input id, e.g. "particle_motion_mode",
  *   "particle_motion_relative_position" (value ["x", "y", "z"]).
  * Messages out:
@@ -81,8 +84,8 @@
 	'use strict';
 	if (window.parent === window) return; // not embedded: nothing to do
 
-	var BRIDGE_VERSION = '1.1.0';
-	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField'];
+	var BRIDGE_VERSION = '1.1.1';
+	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField', 'showGuide'];
 	var OUT = 'cleverlike-snowstorm-bridge';
 	var parentOrigin = null; // learned from the first message; replies go only there
 	var watchTimer = null;
@@ -205,14 +208,24 @@
 		var st = document.createElement('style');
 		st.id = STYLE_ID;
 		st.textContent =
-			'.cleverlike-hl{outline:3px solid #ffc800;outline-offset:2px;border-radius:4px;animation:cleverlike-pulse 1.2s ease-in-out 3}' +
-			'.cleverlike-hl-axis{box-shadow:0 0 0 3px #ffc800 inset;border-radius:3px}' +
-			'@keyframes cleverlike-pulse{50%{outline-color:#ff8a00;outline-offset:5px}}';
+			// the whole row: soft yellow wash and a bar on the left (nothing drawn outside the row, so nothing gets cut off)
+			'.cleverlike-hl{background:rgba(255,200,0,0.16)!important;box-shadow:inset 4px 0 0 #ffc800;animation:cleverlike-pulse 1s ease-in-out 3}' +
+			'@keyframes cleverlike-pulse{50%{background:rgba(255,200,0,0.34)}}' +
+			// the one box to type in: a ring drawn inside the box, above its contents
+			'.cleverlike-hl-axis{position:relative}' +
+			'.cleverlike-hl-axis::after{content:"";position:absolute;inset:0;border:3px solid #ffc800;border-radius:3px;pointer-events:none;z-index:3}' +
+			// X / Y / Z tags on each box of the row, in the preview's axis colours
+			'.cleverlike-axes .input_vector{position:relative}' +
+			'.cleverlike-axes .input_vector::before{content:attr(data-cleverlike-axis);position:absolute;right:4px;top:50%;transform:translateY(-50%);z-index:4;pointer-events:none;' +
+			'font:800 11px/1 system-ui,sans-serif;padding:3px 5px;border-radius:4px;color:#fff}' +
+			'.cleverlike-axes .input_vector[data-cleverlike-axis="X"]::before{background:#d9363e}' +
+			'.cleverlike-axes .input_vector[data-cleverlike-axis="Y"]::before{background:#3a9c2c}' +
+			'.cleverlike-axes .input_vector[data-cleverlike-axis="Z"]::before{background:#2f6fde}';
 		document.head.appendChild(st);
 	}
 	function clearHighlight() {
-		var old = document.querySelectorAll('.cleverlike-hl, .cleverlike-hl-axis');
-		for (var i = 0; i < old.length; i++) old[i].classList.remove('cleverlike-hl', 'cleverlike-hl-axis');
+		var old = document.querySelectorAll('.cleverlike-hl, .cleverlike-hl-axis, .cleverlike-axes');
+		for (var i = 0; i < old.length; i++) old[i].classList.remove('cleverlike-hl', 'cleverlike-hl-axis', 'cleverlike-axes');
 	}
 	function openTab(tab) {
 		var sidebar = document.getElementById('sidebar');
@@ -236,14 +249,138 @@
 				if (!li || li.offsetParent === null) return resolve({ shown: false });
 				li.classList.add('cleverlike-hl');
 				var target = li;
-				if (axis != null) {
-					var boxes = li.querySelectorAll('.input_vector');
-					if (boxes[axis]) { boxes[axis].classList.add('cleverlike-hl-axis'); target = boxes[axis]; }
+				var boxes = li.querySelectorAll('.input_vector');
+				if (boxes.length === 3) {
+					li.classList.add('cleverlike-axes');
+					for (var b = 0; b < 3; b++) boxes[b].setAttribute('data-cleverlike-axis', 'XYZ'[b]);
 				}
-				try { target.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { target.scrollIntoView(); }
+				if (axis != null && boxes[axis]) { boxes[axis].classList.add('cleverlike-hl-axis'); target = boxes[axis]; }
+				// scroll only the sidebar's own list, never the page around it
+				var sc = li.parentElement;
+				while (sc && sc !== document.body && !(sc.scrollHeight > sc.clientHeight + 2 && /auto|scroll/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement;
+				if (sc && sc !== document.body) {
+					var r = li.getBoundingClientRect(), sr = sc.getBoundingClientRect();
+					sc.scrollTop += (r.top - sr.top) - (sc.clientHeight / 2 - r.height / 2);
+				}
 				resolve({ shown: true, tab: f.tab, label: f.input.label || '' });
 			})();
 		});
+	}
+
+	// ---- 1.1.1: helpers drawn in the 3D preview (a numbered block column and a target star)
+	// THREE isn't global in Snowstorm, so the classes are taken from objects already in its scene.
+	var guide = null, guideCamera = null;
+	function sceneRoot() { var o = window.Emitter.scene.space; while (o.parent) o = o.parent; return o; }
+	function threeKit() {
+		var root = sceneRoot(), kids = root.children;
+		var lines = kids.filter(function (c) { return c.type === 'LineSegments'; })[0];
+		var mesh = kids.filter(function (c) { return c.type === 'Mesh'; })[0];
+		var group = kids.filter(function (c) { return c.type === 'Object3D'; })[0];
+		var map = window.Emitter.material && window.Emitter.material.uniforms && window.Emitter.material.uniforms.map && window.Emitter.material.uniforms.map.value;
+		if (!lines || !mesh || !group || !map) throw new Error('The preview is not ready.');
+		return { root: root, LineSegments: lines.constructor, BufferGeometry: lines.geometry.constructor, LineMaterial: lines.material.constructor,
+			Attr: lines.geometry.attributes.position.constructor, Mesh: mesh.constructor, Box: mesh.geometry.constructor,
+			BasicMaterial: mesh.material.constructor, Group: group.constructor, Texture: map.constructor };
+	}
+	function canvasTexture(K, draw, w, h) {
+		var c = document.createElement('canvas'); c.width = w; c.height = h;
+		draw(c.getContext('2d'), w, h);
+		var tx = new K.Texture(c); tx.needsUpdate = true; return tx;
+	}
+	function billboard(K, tex, size, aspect) {
+		var m = new K.Mesh(new K.Box(size * (aspect || 1), size, 0.001), new K.BasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
+		m.renderOrder = 999;
+		m.onBeforeRender = function (renderer, scene, camera) { guideCamera = camera; this.quaternion.copy(camera.quaternion); this.updateMatrixWorld(true); };
+		return m;
+	}
+	function clearGuide() {
+		if (!guide) return;
+		guide.parent && guide.parent.remove(guide);
+		guide.traverse(function (o) { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } });
+		guide = null;
+	}
+	function showGuide(msg) {
+		clearGuide();
+		var blocks = Math.max(0, Math.min(16, Math.round(Number(msg.ruler) || 0)));
+		var star = msg.star == null ? null : Number(msg.star);
+		if (!blocks && star == null) return { shown: false };
+		var K = threeKit();
+		guide = new K.Group(); guide.name = 'cleverlike-guide';
+		// the column stands just left of the emitter as seen from Snowstorm's starting camera (which looks along +x +z)
+		var CX = 1.25, CZ = -1.25;
+		if (blocks) {
+			// block outlines: one cube per level, like a stack of Minecraft blocks
+			var pts = [];
+			function seg(a, b) { pts.push(a[0], a[1], a[2], b[0], b[1], b[2]); }
+			for (var i = 0; i < blocks; i++) {
+				var x0 = CX - 0.5, x1 = CX + 0.5, z0 = CZ - 0.5, z1 = CZ + 0.5, y0 = i, y1 = i + 1;
+				[[x0, z0], [x1, z0], [x1, z1], [x0, z1]].forEach(function (c, k, all) {
+					var n = all[(k + 1) % 4];
+					seg([c[0], y0, c[1]], [n[0], y0, n[1]]); seg([c[0], y1, c[1]], [n[0], y1, n[1]]); seg([c[0], y0, c[1]], [c[0], y1, c[1]]);
+				});
+			}
+			var g = new K.BufferGeometry(); g.setAttribute('position', new K.Attr(new Float32Array(pts), 3));
+			var col = new K.LineSegments(g, new K.LineMaterial({ color: 0x7fd36b, transparent: true, opacity: 0.75 }));
+			guide.add(col);
+			// a green line straight up from the emitter: the Y direction
+			var g2 = new K.BufferGeometry(); g2.setAttribute('position', new K.Attr(new Float32Array([0, 0, 0, 0, blocks + 0.6, 0]), 3));
+			guide.add(new K.LineSegments(g2, new K.LineMaterial({ color: 0x3a9c2c, transparent: true, opacity: 0.5, depthTest: false })));
+			for (var j = 0; j <= blocks; j++) {
+				var lab = billboard(K, canvasTexture(K, (function (txt) { return function (ctx, w, h) {
+					ctx.font = 'bold 44px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+					ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(txt, w / 2, h / 2); ctx.fillStyle = '#ffffff'; ctx.fillText(txt, w / 2, h / 2);
+				}; })(String(j)), 64, 64), 0.55);
+				lab.position.set(CX + 0.75, j, CZ - 0.75);
+				guide.add(lab);
+			}
+			var yl = billboard(K, canvasTexture(K, function (ctx, w, h) {
+				ctx.fillStyle = '#3a9c2c'; ctx.beginPath(); ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2); ctx.fill();
+				ctx.font = 'bold 40px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff'; ctx.fillText('Y', w / 2, h / 2 + 2);
+			}, 64, 64), 0.42);
+			yl.position.set(0, blocks + 0.9, 0);
+			guide.add(yl);
+		}
+		if (star != null && isFinite(star)) {
+			var st = billboard(K, canvasTexture(K, function (ctx, w, h) {
+				ctx.beginPath();
+				for (var i = 0; i < 10; i++) { var a = Math.PI / 5 * i - Math.PI / 2, r = i % 2 ? w * 0.19 : w * 0.44; ctx.lineTo(w / 2 + r * Math.cos(a), h / 2 + r * Math.sin(a)); }
+				ctx.closePath(); ctx.lineWidth = 7; ctx.setLineDash([10, 7]); ctx.strokeStyle = '#ffd23f'; ctx.stroke();
+			}, 128, 128), 1.6);
+			st.position.set(0, star, 0);
+			guide.add(st);
+		}
+		sceneRoot().add(guide);
+		if (msg.frame && blocks) {
+			// back the camera off so the whole column fits; the student can still turn and zoom
+			var tries = 0;
+			(function frame() {
+				if (!guideCamera) { if (++tries < 40) setTimeout(frame, 50); return; }
+				// Snowstorm's camera always aims at (0, 0.8, 0), so back off until 0..blocks+1 fits (45° view)
+				var d = (blocks + 0.7) * 2.45;
+				guideCamera.position.set(-d * 0.69, 0.8 + d * 0.2, -d * 0.69);
+			})();
+		}
+		return { shown: true };
+	}
+
+	// ---- 1.1.1: Snowstorm picks its phone layout once, when it loads, if it is under 720 px wide.
+	// Inside our page it can load narrow (small window, page still laying out) and then stay without
+	// its 3D preview even when there is plenty of room. Switch back whenever it's wide enough.
+	function fixLayout() {
+		var el = document.getElementById('app');
+		var vm = el && el.__vue__ && (el.__vue__.portrait_view !== undefined ? el.__vue__ : el.__vue__.$children && el.__vue__.$children[0]);
+		if (!vm || !vm.portrait_view || document.body.clientWidth < 560) return;
+		var w = document.body.clientWidth;
+		vm.portrait_view = false;
+		vm.tab = 'preview';
+		var saved = parseInt(localStorage.getItem('snowstorm_sidebar_width'), 10);
+		vm.sidebar_width = saved ? Math.min(Math.max(saved, 160), w - 200) : Math.min(Math.max(w / 2, 160), Math.min(Math.max(180 + w * 0.2, 160), 660));
+		window.Vue && window.Vue.nextTick ? window.Vue.nextTick(after) : setTimeout(after, 0);
+		function after() {
+			try { vm.$refs.preview.updateSize(); } catch (e) { /* ignore */ }
+			try { vm.$refs.sidebar.updateSize(); } catch (e) { /* ignore */ }
+			window.dispatchEvent(new Event('resize'));
+		}
 	}
 
 	var handlers = {
@@ -299,6 +436,7 @@
 			(msg.fields || []).forEach(function (pair) { out[pair[0]] = writeField(pair[0], pair[1]); });
 			return { fields: out };
 		},
+		showGuide: function (msg) { return showGuide(msg); },
 		showField: function (msg) {
 			return showField(msg.field == null ? null : msg.field, msg.axis == null ? null : Number(msg.axis));
 		}
@@ -326,6 +464,8 @@
 
 	// Say hello once Snowstorm is up, so the host page knows the bridge is here.
 	whenAppReady(30000).then(function () {
+		fixLayout();
+		window.addEventListener('resize', fixLayout);
 		post({ type: 'ready', bridgeVersion: BRIDGE_VERSION, capabilities: CAPABILITIES }, '*');
 	}).catch(function () { /* host page will time out and say so */ });
 })();
