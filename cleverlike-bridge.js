@@ -34,6 +34,8 @@
  *                        pointer { at: "emitter" | "block" | [x,y,z], label } (an arrow with a word).
  *   type "showField"     1.1.2: note (text) shows a small explanation bubble under the row.
  *   type "getJson"       -> { json } the particle file only, no picture (cheap to ask often)       (1.1.2)
+ *   1.1.3: loadParticle first clears Snowstorm like File > New, so boxes that aren't in the file
+ *          (an empty Direction, say) don't keep old values.
  *   inputId is Snowstorm's own input id, e.g. "particle_motion_mode",
  *   "particle_motion_relative_position" (value ["x", "y", "z"]).
  * Messages out:
@@ -89,8 +91,8 @@
 	'use strict';
 	if (window.parent === window) return; // not embedded: nothing to do
 
-	var BRIDGE_VERSION = '1.1.2';
-	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField', 'showGuide', 'guideV2', 'getJson'];
+	var BRIDGE_VERSION = '1.1.3';
+	var CAPABILITIES = ['ping', 'getParticle', 'loadParticle', 'watch', 'getFields', 'setFields', 'showField', 'showGuide', 'guideV2', 'getJson', 'cleanLoad'];
 	var OUT = 'cleverlike-snowstorm-bridge';
 	var parentOrigin = null; // learned from the first message; replies go only there
 	var watchTimer = null;
@@ -468,6 +470,9 @@
 			if (!json || !json.particle_effect) throw new Error('That is not a particle file.');
 			var tex = msg.textureDataUrl;
 			if (tex && !/^data:image\/png;base64,/.test(tex)) throw new Error('The texture must be a PNG data URL.');
+			// Snowstorm's parent-load skips File > New's reset, so values missing from the file would stay.
+			// Reset first (no confirm dialog), then load.
+			try { window.Emitter.config.unsupported_fields = {}; window.Emitter.config.reset(); } catch (e) { /* older Snowstorm: load anyway */ }
 			window.loadFileFromParentEffect(JSON.stringify(json), tex || undefined);
 			var imageInput = window.Data && window.Data.texture.texture.inputs.image;
 			if (imageInput) {

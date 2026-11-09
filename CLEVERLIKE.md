@@ -9,6 +9,7 @@ Our only changes:
    Since bridge 1.1.0 the embedding page can also read and set single Snowstorm boxes (for example Motion → Offset) and highlight a box so students can see where a value goes. Used by the Particle Packer's Motion Lab.
    Since bridge 1.1.1: the highlight is drawn inside the row (tags X / Y / Z on three-part boxes, in the preview's axis colours); the lab can draw a numbered block column and a target star in the 3D preview (`showGuide`); and when Snowstorm opened in its narrow phone layout (no 3D preview) because its frame was under 720 px wide at load, it switches back to the normal layout once the frame is 560 px or wider.
    Since bridge 1.1.2: the lab's target can be an outline picture (fit the particle in like a puzzle piece) that turns green when reached, the lab can point at things in the preview with an arrow and a word, rows can show a short explanation bubble, and `getJson` lets the lab notice changes outside the current step and put the particle back.
+   Since bridge 1.1.3, `loadParticle` clears Snowstorm first (like File › New, without the question), so boxes that aren't in the loaded file don't keep old values.
 2. **`index.html`**: one `<script>` line after `dist/app.js` that loads the bridge.
 3. **`CNAME` removed**, so GitHub Pages serves this copy at `https://xriverlikex.github.io/snowstorm/` instead of claiming snowstorm.app.
 
